@@ -18,6 +18,9 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# 设置最大上传大小为5GB
+st._config.set_option('server.maxUploadSize', 5000)
+
 # 自定义CSS样式
 st.markdown("""
 <style>
@@ -244,3 +247,4 @@ if __name__ == "__main__":
         - **Linux**: `sudo apt-get install openslide-tools`
         - **macOS**: `brew install openslide`
         """)
+
