@@ -1,2 +1,3 @@
-openslide-tools
 libopenslide0
+openslide-tools
+libgl1
