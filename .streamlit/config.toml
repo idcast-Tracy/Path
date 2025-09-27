@@ -1,6 +1,5 @@
 [server]
 maxUploadSize = 3000
 headless = true
-# 启用CORS并考虑禁用XSRF保护（可能对上传有影响）
-enableCORS = true
+enableCORS = false
 enableXsrfProtection = false
