@@ -1,3 +1,4 @@
 [server]
-maxUploadSize = 5000  # 单位是 MB，5000MB 约为 5GB，应能满足 2GB 文件需求
+maxUploadSize = 5000
 enableCORS = false
+enableXsrfProtection = false
