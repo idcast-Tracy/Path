@@ -1,3 +1,7 @@
+# 打开网页，在cmd命令界面运行下面一段
+# streamlit run C:\Users\30821\Desktop\Shiny复健\04网页计算器\04py部署\Path.py [ARGUMENTS]
+
+
 import openslide
 import streamlit as st
 from PIL import Image
@@ -5,7 +9,6 @@ import io
 import base64
 import tempfile
 import os
-import time
 
 # 设置页面配置
 st.set_page_config(
@@ -15,8 +18,8 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 注意：在Streamlit Cloud上，文件大小限制主要通过config.toml设置
-# 确保在 .streamlit/config.toml 中包含：[server] maxUploadSize = 5000
+# 设置最大上传大小为5GB
+st._config.set_option('server.maxUploadSize', 5000)
 
 # 自定义CSS样式
 st.markdown("""
@@ -46,15 +49,6 @@ st.markdown("""
         padding: 15px;
         border-radius: 5px;
         border-left: 5px solid #28a745;
-    }
-    .warning-box {
-        background-color: #f8d7da;
-        padding: 15px;
-        border-radius: 5px;
-        border-left: 5px solid #dc3545;
-    }
-    .progress-bar {
-        margin: 20px 0;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -107,49 +101,6 @@ def analyze_wsi(wsi_path):
         return {"success": False, "error": f"错误: {str(e)}"}
 
 
-def save_uploaded_file(uploaded_file):
-    """安全地保存上传的文件，支持大文件流式处理"""
-    try:
-        # 创建临时文件
-        suffix = os.path.splitext(uploaded_file.name)[1]
-        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
-            # 获取文件大小用于进度显示
-            file_size = uploaded_file.size
-            
-            # 创建进度条
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-            
-            # 分块写入文件
-            chunk_size = 1024 * 1024  # 1MB chunks
-            bytes_read = 0
-            
-            uploaded_file.seek(0)  # 确保从文件开头开始读取
-            
-            while True:
-                chunk = uploaded_file.read(chunk_size)
-                if not chunk:
-                    break
-                
-                tmp_file.write(chunk)
-                bytes_read += len(chunk)
-                
-                # 更新进度
-                progress = bytes_read / file_size
-                progress_bar.progress(progress)
-                status_text.text(f"上传进度: {bytes_read/(1024*1024):.1f}MB / {file_size/(1024*1024):.1f}MB")
-            
-            tmp_path = tmp_file.name
-        
-        progress_bar.empty()
-        status_text.empty()
-        
-        return tmp_path, None
-        
-    except Exception as e:
-        return None, f"文件保存失败: {str(e)}"
-
-
 def calculate_plnm_score(lvi, tumor_budding, pdcs_level, histologic_grade2, sm2):
     """计算PLNM分数"""
     score = lvi * 4 + tumor_budding * 3 + pdcs_level * 2 + histologic_grade2 * 3 + sm2 * 1
@@ -186,11 +137,8 @@ def main():
         uploaded_file = st.file_uploader(
             "上传全切片图像(WSI):",
             type=['svs', 'tif', 'tiff', 'ndpi', 'scn', 'mrxs', 'vms', 'vmu'],
-            help="支持 .svs, .tif, .tiff, .ndpi, .scn, .mrxs, .vms, .vmu 格式，最大支持5GB文件"
+            help="支持 .svs, .tif, .tiff, .ndpi, .scn, .mrxs, .vms, .vmu 格式"
         )
-        
-        # 显示文件大小限制信息
-        st.info("💡 最大支持5GB文件上传")
 
     # 主内容区域
     # PLNM Score计算结果显示
@@ -205,82 +153,62 @@ def main():
 
     # WSI文件分析结果显示
     if uploaded_file is not None:
-        # 显示文件信息
-        file_size_mb = uploaded_file.size / (1024 * 1024)
-        st.info(f"已选择文件: {uploaded_file.name} ({file_size_mb:.1f} MB)")
-        
         # 创建两列布局
         col1, col2 = st.columns(2)
 
         with col1:
             st.subheader("WSI文件基本信息")
-            
-            # 保存上传的文件到临时位置（使用优化的方法）
-            with st.spinner("正在保存文件..."):
-                tmp_path, error = save_uploaded_file(uploaded_file)
-                
-            if error:
-                st.error(f"文件处理错误: {error}")
-            else:
-                # 显示分析进度
-                with st.spinner("正在分析WSI文件..."):
-                    analysis_result = analyze_wsi(tmp_path)
 
-                # 清理临时文件
-                try:
-                    os.unlink(tmp_path)
-                except Exception as e:
-                    st.warning(f"临时文件清理失败: {str(e)}")
+            # 保存上传的文件到临时位置
+            with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(uploaded_file.name)[1]) as tmp_file:
+                tmp_file.write(uploaded_file.getvalue())
+                tmp_path = tmp_file.name
 
-                if analysis_result["success"]:
-                    st.markdown('<div class="success-box">', unsafe_allow_html=True)
-                    st.write("**WSI文件分析结果:**")
-                    st.write("=================")
-                    st.write(f"**文件格式:** {analysis_result['format']}")
-                    st.write(f"**层级数:** {analysis_result['level_count']}")
-                    st.write(f"**基准层尺寸:** {analysis_result['dimensions_level0']} (宽×高)")
+            # 显示分析进度
+            with st.spinner("正在分析WSI文件..."):
+                analysis_result = analyze_wsi(tmp_path)
 
-                    if analysis_result['downsamples']:
-                        downsamples_str = ", ".join([f"{x:.2f}" for x in analysis_result['downsamples']])
-                        st.write(f"**层级降采样系数:** {downsamples_str}")
-                    else:
-                        st.write("**层级降采样系数:** 无法获取")
+            # 清理临时文件
+            try:
+                os.unlink(tmp_path)
+            except:
+                pass
 
-                    st.write(
-                        f"**扫描分辨率:** {analysis_result['mpp_x']} μm/pixel(x), {analysis_result['mpp_y']} μm/pixel(y)")
-                    st.write(f"**厂商信息:** {analysis_result['vendor']}")
-                    st.markdown('</div>', unsafe_allow_html=True)
+            if analysis_result["success"]:
+                st.markdown('<div class="success-box">', unsafe_allow_html=True)
+                st.write("**WSI文件分析结果:**")
+                st.write("=================")
+                st.write(f"**文件格式:** {analysis_result['format']}")
+                st.write(f"**层级数:** {analysis_result['level_count']}")
+                st.write(f"**基准层尺寸:** {analysis_result['dimensions_level0']} (宽×高)")
+
+                if analysis_result['downsamples']:
+                    downsamples_str = ", ".join([f"{x:.2f}" for x in analysis_result['downsamples']])
+                    st.write(f"**层级降采样系数:** {downsamples_str}")
                 else:
-                    st.markdown('<div class="warning-box">', unsafe_allow_html=True)
-                    st.error(f"分析失败: {analysis_result['error']}")
-                    st.markdown('</div>', unsafe_allow_html=True)
+                    st.write("**层级降采样系数:** 无法获取")
+
+                st.write(
+                    f"**扫描分辨率:** {analysis_result['mpp_x']} μm/pixel(x), {analysis_result['mpp_y']} μm/pixel(y)")
+                st.write(f"**厂商信息:** {analysis_result['vendor']}")
+                st.markdown('</div>', unsafe_allow_html=True)
+            else:
+                st.error(f"分析失败: {analysis_result['error']}")
 
         with col2:
             st.subheader("WSI缩略图")
-            if analysis_result and analysis_result["success"] and "thumbnail" in analysis_result:
+            if analysis_result["success"] and "thumbnail" in analysis_result:
                 # 显示缩略图
                 thumbnail = analysis_result["thumbnail"]
-                st.image(thumbnail, caption="WSI缩略图", width='stretch')
+                st.image(thumbnail, caption="WSI缩略图", use_container_width=True)
 
                 # 显示图像信息
                 st.write(f"**缩略图尺寸:** {thumbnail.size[0]} × {thumbnail.size[1]} 像素")
-                
-                # 添加下载缩略图功能
-                buf = io.BytesIO()
-                thumbnail.save(buf, format="PNG")
-                byte_im = buf.getvalue()
-                
-                st.download_button(
-                    label="下载缩略图",
-                    data=byte_im,
-                    file_name="thumbnail.png",
-                    mime="image/png"
-                )
             else:
                 st.warning("无可用图像")
                 # 显示占位图
                 st.image(Image.new('RGB', (400, 400), color='gray'),
-                         caption="无图像", width='stretch')
+                         caption="无图像", use_container_width=True)
 
     else:
         # 没有上传文件时的提示
@@ -296,13 +224,14 @@ def main():
         with col2:
             st.subheader("WSI缩略图")
             st.image(Image.new('RGB', (400, 400), color='lightgray'),
-                     caption="等待上传文件", width='stretch')
+                     caption="等待上传文件", use_container_width=True)
 
 
 if __name__ == "__main__":
     # 检查openslide是否可用
     try:
         import openslide
+
         main()
     except ImportError:
         st.error("""
