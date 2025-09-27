@@ -1,16 +1,29 @@
 # 打开网页，在cmd命令界面运行下面一段
 # streamlit run C:\Users\30821\Desktop\Pathlogical\Path.py [ARGUMENTS]
 
-import openslide
+import os
+import sys
+# 设置无头模式，避免GUI相关错误
+os.environ['OPENSLIDE_HEADLESS'] = 'True'
+
 import streamlit as st
 from PIL import Image
 import io
-import base64
 import tempfile
-import os
 import time
 from datetime import datetime
 import json
+
+# 尝试导入openslide，如果失败提供友好错误提示
+try:
+    import openslide
+    OPENSLIDE_AVAILABLE = True
+except ImportError as e:
+    OPENSLIDE_AVAILABLE = False
+    st.error(f"❌ OpenSlide导入失败: {str(e)}")
+except Exception as e:
+    OPENSLIDE_AVAILABLE = False
+    st.error(f"❌ OpenSlide初始化错误: {str(e)}")
 
 # 设置页面配置
 st.set_page_config(
@@ -19,9 +32,6 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
-
-# 设置最大上传大小为5GB
-st._config.set_option('server.maxUploadSize', 5000)
 
 # 自定义CSS样式
 st.markdown("""
@@ -58,25 +68,11 @@ st.markdown("""
         border-radius: 5px;
         border-left: 5px solid #dc3545;
     }
-    .metadata-table {
-        width: 100%;
-        border-collapse: collapse;
-        margin: 10px 0;
-    }
-    .metadata-table th, .metadata-table td {
-        border: 1px solid #ddd;
-        padding: 8px;
-        text-align: left;
-    }
-    .metadata-table th {
-        background-color: #f2f2f2;
-    }
 </style>
 """, unsafe_allow_html=True)
 
-
 class WSIAnalyzer:
-    """WSI文件分析器 - Streamlit优化版"""
+    """WSI文件分析器 - Streamlit Cloud兼容版"""
 
     def __init__(self):
         self.progress_bar = None
@@ -96,6 +92,9 @@ class WSIAnalyzer:
 
     def analyze_wsi(self, wsi_path, max_thumbnail_size=800):
         """分析WSI文件"""
+        if not OPENSLIDE_AVAILABLE:
+            return {"success": False, "error": "OpenSlide不可用"}
+            
         start_time = time.time()
 
         try:
@@ -126,8 +125,11 @@ class WSIAnalyzer:
             }
 
             # 基本信息
-            analysis_result["format"] = str(slide.detect_format(wsi_path)) if slide.detect_format(
-                wsi_path) else "Unknown"
+            try:
+                analysis_result["format"] = str(slide.detect_format(wsi_path)) if slide.detect_format(wsi_path) else "Unknown"
+            except:
+                analysis_result["format"] = "Unknown"
+                
             analysis_result["level_count"] = int(slide.level_count)
             analysis_result["dimensions_level0"] = str(slide.level_dimensions[0])
             analysis_result["downsamples"] = [float(x) for x in slide.level_downsamples]
@@ -160,8 +162,8 @@ class WSIAnalyzer:
                 if prop in slide.properties:
                     analysis_result["properties"][prop] = slide.properties[prop]
 
-            # 自动选择最佳层级
-            optimal_level = self.select_optimal_level(slide, max_pixels=2000 * 2000)
+            # 自动选择最佳层级 - 使用更保守的设置
+            optimal_level = self.select_optimal_level(slide, max_pixels=1000 * 1000)
             self.update_progress(0.7, f"选择层级 {optimal_level} 生成缩略图")
 
             # 生成缩略图
@@ -186,8 +188,8 @@ class WSIAnalyzer:
         except Exception as e:
             return {"success": False, "error": f"错误: {type(e).__name__}: {str(e)}"}
 
-    def select_optimal_level(self, slide, max_pixels=2000 * 2000):
-        """选择最优层级"""
+    def select_optimal_level(self, slide, max_pixels=1000 * 1000):
+        """选择最优层级 - 使用更保守的设置"""
         # 优先选择像素数小于max_pixels的最高分辨率层级
         for i in range(slide.level_count):
             width, height = slide.level_dimensions[i]
@@ -218,12 +220,10 @@ class WSIAnalyzer:
             st.error(f"生成缩略图失败: {str(e)}")
             return None
 
-
 def calculate_plnm_score(lvi, tumor_budding, pdcs_level, histologic_grade2, sm2):
     """计算PLNM分数"""
     score = lvi * 4 + tumor_budding * 3 + pdcs_level * 2 + histologic_grade2 * 3 + sm2 * 1
     return score
-
 
 def display_analysis_results(analysis_result):
     """显示分析结果"""
@@ -253,21 +253,17 @@ def display_analysis_results(analysis_result):
             st.write(f"**{key}:** {value}")
 
         # 层级信息
-        st.markdown("**层级信息**")
-        levels_data = []
-        for level_info in analysis_result["levels"]:
-            levels_data.append({
-                "层级": level_info["level"],
-                "宽度": level_info["width"],
-                "高度": level_info["height"],
-                "降采样": f"{level_info['downsample']:.2f}x",
-                "总像素": f"{level_info['total_pixels']:,}"
-            })
-
-        # 显示前几个层级（避免表格太长）
-        st.table(levels_data[:5])
-        if len(levels_data) > 5:
-            st.info(f"还有 {len(levels_data) - 5} 个层级未显示")
+        if analysis_result["levels"]:
+            st.markdown("**层级信息**")
+            levels_data = []
+            for level_info in analysis_result["levels"][:3]:  # 只显示前3个层级
+                levels_data.append({
+                    "层级": level_info["level"],
+                    "宽度": level_info["width"],
+                    "高度": level_info["height"],
+                    "降采样": f"{level_info['downsample']:.2f}x"
+                })
+            st.table(levels_data)
 
         # 元数据
         if analysis_result["properties"]:
@@ -280,7 +276,7 @@ def display_analysis_results(analysis_result):
         if analysis_result["thumbnail_generated"]:
             thumbnail = analysis_result["thumbnail"]
             st.image(thumbnail, caption=f"缩略图尺寸: {thumbnail.size[0]} × {thumbnail.size[1]}",
-                     use_container_width=True)
+                     width='stretch')
 
             # 提供下载链接
             buf = io.BytesIO()
@@ -296,8 +292,32 @@ def display_analysis_results(analysis_result):
         else:
             st.warning("缩略图生成失败")
 
-
 def main():
+    # 检查OpenSlide是否可用
+    if not OPENSLIDE_AVAILABLE:
+        st.error("""
+        ## ❌ OpenSlide不可用
+        
+        当前环境缺少OpenSlide支持。这可能是由于：
+        
+        - 系统级OpenSlide库未安装
+        - 环境配置问题
+        
+        对于Streamlit Cloud部署，请确保：
+        1. 项目根目录有 `packages.txt` 文件，内容为：
+        ```
+        libopenslide0
+        openslide-tools
+        ```
+        2. 项目根目录有 `requirements.txt` 文件，内容为：
+        ```
+        streamlit>=1.28.0
+        Pillow>=10.0.0
+        openslide-python==1.3.1
+        ```
+        """)
+        return
+
     # 页面标题
     st.markdown('<div class="main-header">🔬 病理切片分析平台</div>', unsafe_allow_html=True)
 
@@ -336,7 +356,6 @@ def main():
         # 高级设置
         with st.expander("⚙️ 高级设置"):
             max_thumbnail_size = st.slider("缩略图最大尺寸", 400, 1200, 800, 50)
-            auto_open = st.checkbox("自动显示详细分析", value=True)
 
     # 主内容区域
     # PLNM Score计算结果显示
@@ -371,11 +390,6 @@ def main():
             # 显示成功消息
             if analysis_result["success"]:
                 st.success(f"✅ 分析完成！文件 '{uploaded_file.name}' 已成功处理。")
-
-                # 显示详细分析报告（可选）
-                if auto_open:
-                    with st.expander("📋 详细分析报告"):
-                        st.json(analysis_result)
 
         except Exception as e:
             st.error(f"❌ 分析过程中发生错误: {str(e)}")
@@ -416,30 +430,7 @@ def main():
         with col2:
             st.subheader("🖼️ WSI缩略图")
             st.image(Image.new('RGB', (400, 300), color='lightgray'),
-                     caption="等待上传文件", use_container_width=True)
-
-        # 使用说明
-        with st.expander("📖 使用说明"):
-            st.markdown("""
-            ### 使用步骤：
-            1. **设置病理参数** - 在左侧边栏选择相应的病理参数
-            2. **上传WSI文件** - 点击"Browse files"或拖拽文件到上传区域
-            3. **查看结果** - 系统将自动分析文件并显示结果
-
-            ### 支持的文件格式：
-            - .svs (Aperio)
-            - .tif, .tiff (TIFF)
-            - .ndpi (Hamamatsu)
-            - .scn (Leica)
-            - .mrxs (MIRAX)
-            - .vms, .vmu (Philips)
-
-            ### 功能特点：
-            - 智能层级选择，优化内存使用
-            - 详细的元数据提取
-            - 高质量缩略图生成
-            - 支持大文件处理（最大5GB）
-            """)
+                     caption="等待上传文件", width='stretch')
 
     # 页脚信息
     st.markdown("---")
@@ -448,30 +439,9 @@ def main():
         unsafe_allow_html=True
     )
 
-
 if __name__ == "__main__":
-    # 检查openslide是否可用
-    try:
-        import openslide
-
-        main()
-    except ImportError:
-        st.error("""
-        **❌ 错误: openslide-python 库未安装**
-
-        请使用以下命令安装所需依赖：
-        ```bash
-        pip install openslide-python streamlit Pillow
-        ```
-
-        另外，您还需要安装系统级的OpenSlide库：
-        - **Windows**: 下载OpenSlide Win64并设置环境变量
-        - **Linux**: `sudo apt-get install openslide-tools`
-        - **macOS**: `brew install openslide`
-
-        对于Streamlit Cloud部署，请确保在requirements.txt中包含：
-        ```
-        openslide-python
-        Pillow
-        ```
-        """)
+    # 设置无头模式
+    if 'STREAMLIT_SERVER' in os.environ:
+        os.environ['OPENSLIDE_HEADLESS'] = 'True'
+    
+    main()
