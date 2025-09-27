@@ -200,7 +200,7 @@ def main():
             if analysis_result["success"] and "thumbnail" in analysis_result:
                 # 显示缩略图
                 thumbnail = analysis_result["thumbnail"]
-                st.image(thumbnail, caption="WSI缩略图", width=True)
+                st.image(thumbnail, caption="WSI缩略图", use_container_width=True)
 
                 # 显示图像信息
                 st.write(f"**缩略图尺寸:** {thumbnail.size[0]} × {thumbnail.size[1]} 像素")
@@ -208,7 +208,7 @@ def main():
                 st.warning("无可用图像")
                 # 显示占位图
                 st.image(Image.new('RGB', (400, 400), color='gray'),
-                         caption="无图像", width=True)
+                         caption="无图像", use_container_width=True)
 
     else:
         # 没有上传文件时的提示
@@ -224,7 +224,7 @@ def main():
         with col2:
             st.subheader("WSI缩略图")
             st.image(Image.new('RGB', (400, 400), color='lightgray'),
-                     caption="等待上传文件", width=True)
+                     caption="等待上传文件", use_container_width=True)
 
 
 if __name__ == "__main__":
@@ -247,5 +247,3 @@ if __name__ == "__main__":
         - **Linux**: `sudo apt-get install openslide-tools`
         - **macOS**: `brew install openslide`
         """)
-
-
